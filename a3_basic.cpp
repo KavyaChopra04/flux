@@ -12,10 +12,67 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include "md5_hash/hashlibpp.h"
+#include <chrono>
 #define SERVERPORT "9801"
 #define IP_ADDR "localhost"
 const int NUMBYTES_PER_REQUEST = 1448;
 using namespace std;
+int sendMessage(string s, int socketDescriptor, fd_set& writeDescriptors, struct timeval setTimeOut)
+{
+    int bytesSent = 0;
+    FD_SET(socketDescriptor, &writeDescriptors);
+    int x = select(socketDescriptor+1, NULL, &writeDescriptors,  NULL, &setTimeOut);
+    if(FD_ISSET(socketDescriptor, &writeDescriptors))
+    {
+        bytesSent = send(socketDescriptor, s.c_str(), s.size(), 0);
+        return 1;
+    }
+    return 0;
+}
+int readMessage(char* responseBuffer, int lenBuffer, int socketDescriptor, fd_set& readDescriptors, struct timeval setTimeOut)
+{
+    int bytesReceived = 0;
+    FD_SET(socketDescriptor, &readDescriptors);
+    int x = select(socketDescriptor+1, &readDescriptors, NULL, NULL, &setTimeOut);
+    if(FD_ISSET(socketDescriptor, &readDescriptors))
+    {
+        bytesReceived = recv(socketDescriptor, responseBuffer, lenBuffer, 0);
+        return 1;
+    }
+    return 0;
+}
+int initializeSocket()
+{
+    int socketDescriptor;
+    struct addrinfo connectionInfo;
+    struct addrinfo *serverAddressListHead;
+    struct addrinfo *serverAddress;
+    int returnValue;
+    int numbytes;
+    memset(&connectionInfo, 0, sizeof connectionInfo);
+    connectionInfo.ai_family = AF_INET; 
+    connectionInfo.ai_socktype = SOCK_DGRAM;
+    if ((returnValue = getaddrinfo(IP_ADDR, SERVERPORT, &connectionInfo, &serverAddressListHead)) != 0) {
+        printf("unable to get server address");
+        return 1;
+    }
+    
+    for(serverAddress = serverAddressListHead; serverAddress != NULL; serverAddress = serverAddress->ai_next) {
+        if ((socketDescriptor = socket(serverAddress->ai_family, serverAddress->ai_socktype,
+            serverAddress->ai_protocol)) == -1) {
+            continue;
+        }
+        break;            cout<<"unable to connect"<<'\n';
+
+    }
+    if (serverAddress == NULL) {
+        cout<<"socket creation failed, terminating program"<<'\n';
+        return 1;
+    }
+    connect(socketDescriptor, serverAddressListHead->ai_addr, serverAddressListHead->ai_addrlen);
+    freeaddrinfo(serverAddressListHead);
+    return socketDescriptor;
+}
 string constructRequest(int offset, int numBytes)
 {
     string s = "";
@@ -29,6 +86,7 @@ string constructRequest(int offset, int numBytes)
 }
 std::pair<string, int> parseOutput(string s)
 {
+    //cout<<s<<endl;
     int index = 0;
     if(s[0]=='E')
     {
@@ -44,17 +102,35 @@ std::pair<string, int> parseOutput(string s)
         index++;
     }
     index++;
+    int numbytes = 0;
     while(s[index]!='\n' && index<s.size())
     {
+        if(s[index]>='0' && s[index]<='9')
+        {
+            numbytes = numbytes*10 + s[index] - '0';
+        }
         index++;
     }
-    index++;
     index++;
     if(index>=s.size())
     {
         return make_pair("", -1);
     }
-    string lineData = s.substr(index, min(1448, int(s.size())-index));
+    try{
+        string squished = s.substr(index, strlen("Squished\n"));
+        //cout<<"index is "<<index<<" s is "<<squished<<endl;
+        if(squished=="Squished\n")
+        {
+            index+=strlen("Squished\n");
+        }
+    }
+    catch(int x)
+    {
+        ;
+    }
+    index++;
+    string lineData = s.substr(index, min(numbytes, int(s.size())-index));
+    //cout<<"lineData is "<<lineData<<endl;
     return make_pair(lineData, offsetValue);
 }
 int extractSize(string s)
@@ -74,146 +150,65 @@ int extractSize(string s)
 }
 int main(int argc, char *argv[])
 {
-    int sockfd;
-    struct addrinfo hints, *servinfo, *p;
-    int rv;
-    int numbytes;
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_INET; // set to AF_INET to use IPv4
-    hints.ai_socktype = SOCK_DGRAM;
-
-    if ((rv = getaddrinfo(IP_ADDR, SERVERPORT, &hints, &servinfo)) != 0) {
-        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
-        return 1;
-    }
-    string fileValue = "";
-// loop through all the results and make a socket
-    for(p = servinfo; p != NULL; p = p->ai_next) {
-        if ((sockfd = socket(p->ai_family, p->ai_socktype,
-            p->ai_protocol)) == -1) {
-            perror("talker: socket");
-            continue;
-        }
-        break;
-    }
-    if (p == NULL) {
-        fprintf(stderr, "talker: failed to create socket\n");
-        return 2;
-    }
-    connect(sockfd, servinfo->ai_addr, servinfo->ai_addrlen);
-    char buf[1000 + NUMBYTES_PER_REQUEST];
-    struct sockaddr_storage their_addr;
-    socklen_t addr_len;
-    addr_len = sizeof their_addr;
-    fd_set readfds;
-    FD_ZERO(&readfds);
-    FD_SET(sockfd, &readfds);
-    fd_set writefds;
-    FD_ZERO(&writefds);
-    FD_SET(sockfd, &writefds);
-    struct timeval timeOutSet;
-    timeOutSet.tv_sec = 0;
-    timeOutSet.tv_usec=5000;
-    int x = select(sockfd+1, NULL, &writefds,  NULL, &timeOutSet);
-    cout<<FD_ISSET(sockfd, &writefds)<<endl;
-    numbytes = send(sockfd, "SendSize\n\n", strlen("SendSize\n\n"), 0); 
-    //cout<<numbytes<<endl;           
-    //cout<<"data sent successfully sockfd is "<<sockfd<<endl;
-    if (numbytes == -1) {
-        perror("talker: sendto");
-        exit(1);
-    }
-    //numbytes = recvfrom(sockfd, buf, 100 , 0,(struct sockaddr *)&their_a
+    int socketDescriptor = initializeSocket();
+    char responseBuffer[1000 + NUMBYTES_PER_REQUEST];
+    fd_set readDescriptors;
+    FD_ZERO(&readDescriptors);
+    fd_set writeDescriptors;
+    FD_ZERO(&writeDescriptors);
+    struct timeval setTimeOut;
+    setTimeOut.tv_sec = 0;
+    setTimeOut.tv_usec=2000;
     while (true)
     {
-        numbytes = send(sockfd, "SendSize\n\n", strlen("SendSize\n\n"), 0); 
-        FD_SET(sockfd, &readfds);
-        x = select(sockfd+1, &readfds, NULL, NULL, &timeOutSet);
-        if(FD_ISSET(sockfd, &readfds))
+        if(!sendMessage("SendSize\n\n", socketDescriptor, writeDescriptors, setTimeOut))
         {
-            numbytes = recv(sockfd, buf, 100, 0);
-            break;
-            cout<<buf<<endl;
+            continue;
         }
-    }
-    x = select(sockfd+1, &readfds, NULL, NULL, &timeOutSet);
-    if(FD_ISSET(sockfd, &readfds))
-    {
-        numbytes = recv(sockfd, buf, 100, 0);
-        cout<<buf<<endl;
-    }
-    // numbytes = recvfrom(sockfd, buf, 100 , 0,(struct sockaddr *)&their_addr, &addr_len);
-    if (numbytes == -1) {
-        perror("recvfrom");
-        exit(1);
-    }
-    cout<<"Received "<<buf<<endl;
-    int fileSize = extractSize(buf);
-    cout<<"File size is "<<fileSize<<endl;
-    int numPackets = (fileSize + NUMBYTES_PER_REQUEST - 1)/NUMBYTES_PER_REQUEST;
-    cout<<"The number of packets we need to send for are "<<numPackets<<'\n';
-    set<int> packetsLeft;
-    for(int i = 0; i<numPackets; i++)
-    {
-        packetsLeft.insert(i);
-    }
-    int reclines = 0;
-    vector<string> packetContents(numPackets);
-    while(!packetsLeft.empty())
-    {
-        usleep(5000);
-        int sendFor = *packetsLeft.begin();
-        //cout<<"sendFor is "<<sendFor<<'\n';
-        string s = constructRequest(sendFor, NUMBYTES_PER_REQUEST);
-        //cout<<s.c_str()<<endl;
-        int x = select(sockfd+1,NULL, &writefds, NULL, &timeOutSet);
-        numbytes = send(sockfd, s.c_str(), s.size(), 0);
-        if (numbytes == -1) {
-            perror("talker: sendto");
-            exit(1);
-        }
-        //cout<<"request sent successfully"<<endl;
-        char buf[NUMBYTES_PER_REQUEST + 1000];
-        FD_SET(sockfd, &readfds);
-        int xy = select(sockfd+1, &readfds, NULL, NULL, &timeOutSet);
-        if(FD_ISSET(sockfd, &readfds))
+        if(!readMessage(responseBuffer, 1000 + NUMBYTES_PER_REQUEST, socketDescriptor, readDescriptors, setTimeOut))
         {
-            numbytes = recv(sockfd, buf, NUMBYTES_PER_REQUEST + 1000 , 0);
-            reclines++;
+            continue;
         }
         else
         {
-            //cout<<"socket not ready to read \n, currently received "<<reclines<<endl;
+            cout<<"responseBuffer: "<<responseBuffer<<endl;
+            break;
+        }
+    }
+    readMessage(responseBuffer, socketDescriptor, 1000 + NUMBYTES_PER_REQUEST, readDescriptors, setTimeOut);
+    int fileSize = extractSize(responseBuffer);
+    int numPackets = (fileSize + NUMBYTES_PER_REQUEST - 1)/NUMBYTES_PER_REQUEST;
+    vector<string> packetContents(numPackets);
+    string fileValue = "";
+    int packetsReceived = 0;
+    while(packetsReceived<numPackets)
+    {
+        usleep(5000);
+        int sendFor = packetsReceived;
+        string requestString = constructRequest(sendFor, NUMBYTES_PER_REQUEST);
+        if(!sendMessage(requestString, socketDescriptor, writeDescriptors, setTimeOut))
+        {
             continue;
         }
-        //cout<<buf<<endl;
-        std::pair<string, int> lineData = parseOutput(buf);
+        char responseBuffer[NUMBYTES_PER_REQUEST + 1000];
+        if(!readMessage(responseBuffer, 1000 + NUMBYTES_PER_REQUEST, socketDescriptor, readDescriptors, setTimeOut))
+        {
+            continue;
+        }
+        std::pair<string, int> lineData = parseOutput(responseBuffer);
         if(lineData.first=="" || lineData.second!=NUMBYTES_PER_REQUEST*sendFor)
         {
             continue;
         }
-        // if(lineData.first=="")
-        // {
-        //     continue;
-        // }
-        //cout<<"successfully received packet with offset "<<sendFor<<'\n';
         packetContents[sendFor] = lineData.first;
         fileValue += lineData.first;
-        //cout<<lineData.first.length()<<endl;
-        packetsLeft.erase(packetsLeft.begin());
-        //cout<<"packets left are "<<packetsLeft.size()<<endl;
+        packetsReceived++;
     }
-
-    char valBuf[200];
-    //cout<<"Number of packets is "<<numPackets<<endl;
-    string s = "SendFile\n\n";
     hashwrapper *myWrapper = new md5wrapper();
     string hashValue = myWrapper->getHashFromString(fileValue);
     string finalSubmission = "Submit: kavya@col334-672\n";
     finalSubmission += "MD5: " + hashValue + "\n\n";
-    numbytes = send(sockfd, finalSubmission.c_str(), finalSubmission.size(), 0);
-    freeaddrinfo(servinfo);
-    //printf("talker: sent %d bytes to %s\n", numbytes, argv[1]);
-    close(sockfd);
+    int SubmittedBytes = send(socketDescriptor, finalSubmission.c_str(), finalSubmission.size(), 0);
+    close(socketDescriptor);
     return 0;
  }
