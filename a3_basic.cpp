@@ -13,9 +13,12 @@
 #include <netdb.h>
 #include "md5_hash/hashlibpp.h"
 #include <chrono>
+#include <fstream> 
 #define SERVERPORT "9801"
 #define IP_ADDR "localhost"
 const int NUMBYTES_PER_REQUEST = 1448;
+const int SLEEP_TIME = 5000;
+const int SELECT_TIMEOUT = 5000;
 using namespace std;
 int sendMessage(string s, int socketDescriptor, fd_set& writeDescriptors, struct timeval setTimeOut)
 {
@@ -135,7 +138,7 @@ std::pair<string, int> parseOutput(string s)
 }
 int extractSize(string s)
 {
-    cout<<"in ext size, s is "<<s<<endl;
+    //cout<<"in ext size, s is "<<s<<endl;
     int i = 0;
     int size = 0;
     while(i<s.size())
@@ -150,7 +153,9 @@ int extractSize(string s)
 }
 int main(int argc, char *argv[])
 {
+    //ofstream packetLogging("log.txt");
     int socketDescriptor = initializeSocket();
+    std::chrono::time_point<std::chrono::system_clock> startTime = std::chrono::system_clock::now();
     char responseBuffer[1000 + NUMBYTES_PER_REQUEST];
     fd_set readDescriptors;
     FD_ZERO(&readDescriptors);
@@ -158,7 +163,7 @@ int main(int argc, char *argv[])
     FD_ZERO(&writeDescriptors);
     struct timeval setTimeOut;
     setTimeOut.tv_sec = 0;
-    setTimeOut.tv_usec=2000;
+    setTimeOut.tv_usec=SELECT_TIMEOUT;
     while (true)
     {
         if(!sendMessage("SendSize\n\n", socketDescriptor, writeDescriptors, setTimeOut))
@@ -171,7 +176,7 @@ int main(int argc, char *argv[])
         }
         else
         {
-            cout<<"responseBuffer: "<<responseBuffer<<endl;
+            //cout<<"responseBuffer: "<<responseBuffer<<endl;
             break;
         }
     }
@@ -183,19 +188,26 @@ int main(int argc, char *argv[])
     int packetsReceived = 0;
     while(packetsReceived<numPackets)
     {
-        usleep(5000);
+        usleep(SLEEP_TIME);
         int sendFor = packetsReceived;
         string requestString = constructRequest(sendFor, NUMBYTES_PER_REQUEST);
         if(!sendMessage(requestString, socketDescriptor, writeDescriptors, setTimeOut))
         {
             continue;
         }
+        std::chrono::time_point<std::chrono::system_clock> currTime = std::chrono::system_clock::now();
+        auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(currTime-startTime);
+        cout<<"S"<< " " << sendFor*NUMBYTES_PER_REQUEST<<" "<<microseconds.count()<<endl;
+
         char responseBuffer[NUMBYTES_PER_REQUEST + 1000];
         if(!readMessage(responseBuffer, 1000 + NUMBYTES_PER_REQUEST, socketDescriptor, readDescriptors, setTimeOut))
         {
             continue;
         }
+        currTime = std::chrono::system_clock::now();
+        microseconds = std::chrono::duration_cast<std::chrono::microseconds>(currTime-startTime);
         std::pair<string, int> lineData = parseOutput(responseBuffer);
+        cout<<"R"<< " " << lineData.second<<" "<<microseconds.count()<<endl;
         if(lineData.first=="" || lineData.second!=NUMBYTES_PER_REQUEST*sendFor)
         {
             continue;
