@@ -18,7 +18,7 @@
 #define IP_ADDR "localhost"
 const int NUMBYTES_PER_REQUEST = 1448;
 const int SLEEP_TIME = 5000;
-const int SELECT_TIMEOUT = 5000;
+const int SELECT_TIMEOUT = 2000;
 using namespace std;
 int sendMessage(string s, int socketDescriptor, fd_set& writeDescriptors, struct timeval setTimeOut)
 {
@@ -153,7 +153,6 @@ int extractSize(string s)
 }
 int main(int argc, char *argv[])
 {
-    //ofstream packetLogging("log.txt");
     int socketDescriptor = initializeSocket();
     std::chrono::time_point<std::chrono::system_clock> startTime = std::chrono::system_clock::now();
     char responseBuffer[1000 + NUMBYTES_PER_REQUEST];
@@ -216,8 +215,14 @@ int main(int argc, char *argv[])
         fileValue += lineData.first;
         packetsReceived++;
     }
+    string dummyVal = "";
+    for(int i=0; i<numPackets; i++)
+    {
+        dummyVal+=packetContents[i];
+    }
+    cout<<(dummyVal==fileValue)<<endl;
     hashwrapper *myWrapper = new md5wrapper();
-    string hashValue = myWrapper->getHashFromString(fileValue);
+    string hashValue = myWrapper->getHashFromString(dummyVal);
     string finalSubmission = "Submit: kavya@col334-672\n";
     finalSubmission += "MD5: " + hashValue + "\n\n";
     int SubmittedBytes = send(socketDescriptor, finalSubmission.c_str(), finalSubmission.size(), 0);
