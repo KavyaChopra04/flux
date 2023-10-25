@@ -1,7 +1,7 @@
 import matplotlib
 import matplotlib.pyplot as plt
 matplotlib.use('TkAgg')
-with open('log.txt') as f:
+with open('v2.txt') as f:
     lines = f.readlines()
 lines = lines[3:]
 xReceive = []

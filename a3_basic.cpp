@@ -15,7 +15,7 @@
 #include <chrono>
 #include <fstream> 
 #define SERVERPORT "9801"
-#define IP_ADDR "localhost"
+#define IP_ADDR "vayu.iitd.ac.in"
 const int NUMBYTES_PER_REQUEST = 1448;
 const int SLEEP_TIME = 5000;
 const int SELECT_TIMEOUT = 2000;
