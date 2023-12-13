@@ -11,11 +11,11 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include "md5_hash/hashlibpp.h"
+#include "../md5_hash/hashlibpp.h"
 #include <chrono>
 #include <fstream> 
 #define SERVERPORT "9801"
-#define IP_ADDR "vayu.iitd.ac.in"
+#define IP_ADDR "localhost"
 const int NUMBYTES_PER_REQUEST = 1448;
 const int SLEEP_TIME = 5000;
 const int SELECT_TIMEOUT = 2000;

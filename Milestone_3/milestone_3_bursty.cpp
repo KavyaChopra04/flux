@@ -11,47 +11,41 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include "md5_hash/hashlibpp.h"
+#include "../md5_hash/hashlibpp.h"
 #include <chrono>
 #include <fstream> 
 #define SERVERPORT "9802"
-#define IP_ADDR "vayu.iitd.ac.in"
+#define IP_ADDR "localhost"
 const int NUMBYTES_PER_REQUEST = 1448;
-int SLEEP_TIME = 4000;
+int SLEEP_TIME = 8000;
+int MID_TIME = 8000;
 int EST_RTT_TIMEOUT = 10000;
-const int SELECT_TIMEOUT = 2000;
+const int SELECT_TIMEOUT = 4000;
+int BURST_SIZE = 10;
 using namespace std;
 int lastSquished = 0;
 int numSquished = 0;
-// bool parseResult(char* responseBuffer, int size)
-// {
-//     int index = 0;
-//     while(index + )
-//     string squished = responseBuffer.substr(index, strlen("Squished\n"));
-//     if(squished=="Squished\n")
-//     {
-//         return true;
-//     }
-//     return false;
-// }
 int dynamicRateAdjust(int &sleepTime)
 {
-    // float sleepTimeFloat = (float)sleepTime;
-    // if(lastSquished==1 && numSquished>=100)
-    // {
-    //     numSquished = 0;
-    //     sleepTimeFloat = sleepTimeFloat * 1.1;
-    //     cout<<"setting sleep time to "<<sleepTimeFloat<<endl;
-    // }
-    // else if(lastSquished==0)
-    // {
-    //     sleepTimeFloat = sleepTimeFloat * 0.9;
-    //             cout<<"setting sleep time to "<<sleepTimeFloat<<endl;
+    float sleepTimeFloat = (float)sleepTime;
+    if(lastSquished==1 && numSquished >= 100)
+    {
+        numSquished = 0;
+        sleepTimeFloat = sleepTimeFloat * 1.5;
+        //cout<<"setting sleep time to "<<sleepTimeFloat<<endl;
+    }
+    else if(lastSquished==0)
+    {
+        sleepTimeFloat = sleepTimeFloat * 0.9;
+                //cout<<"setting sleep time to "<<sleepTimeFloat<<endl;
 
-    // }
-    // sleepTime = (int)sleepTimeFloat;
+    }
+    sleepTime = (int)sleepTimeFloat;
     return sleepTime;
 }
+
+
+
 int sendMessage(string s, int socketDescriptor, fd_set& writeDescriptors, struct timeval setTimeOut)
 {
     int bytesSent = 0;
@@ -73,7 +67,7 @@ int readMessage(char* responseBuffer, int lenBuffer, int socketDescriptor, fd_se
     if(FD_ISSET(socketDescriptor, &readDescriptors))
     {
         bytesReceived = recv(socketDescriptor, responseBuffer, lenBuffer, 0);
-        //cout<<"message received successfully"<<endl;
+        //std::cout<<"message received successfully"<<endl;
         return 1;
     }
     return 0;
@@ -175,7 +169,7 @@ std::pair<bool, std::pair<string, int>> parseOutput(string s)
 }
 int extractSize(string s)
 {
-    //cout<<"in ext size, s is "<<s<<endl;vayu.iitd.ac.in
+    //cout<<"in ext size, s is "<<s<<endl;
     int i = 0;
     int size = 0;
     while(i<s.size())
@@ -188,6 +182,81 @@ int extractSize(string s)
     }
     return size;
 }
+
+void req10msgs(set<int> &notReceived, int socketDescriptor, fd_set& writeDescriptors, fd_set& readDescriptors, struct timeval setTimeOut, vector<string> &packetContents, std::chrono::time_point<std::chrono::system_clock> &startTime)
+{
+    int numRequests = 0;
+    for(auto packetNum : notReceived)
+    {
+        
+        string request = constructRequest(packetNum, NUMBYTES_PER_REQUEST);
+        std::chrono::time_point<std::chrono::system_clock> currTime = std::chrono::system_clock::now();
+        auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(currTime-startTime);
+        cout<<"S"<< " " << packetNum*NUMBYTES_PER_REQUEST<<" "<<microseconds.count()<<endl;
+        if(!sendMessage(request, socketDescriptor, writeDescriptors, setTimeOut))
+        {
+            continue;
+        }
+        else
+        {
+            numRequests++;
+        }
+        if(numRequests >= BURST_SIZE)
+            break;
+    }
+    usleep(MID_TIME);
+    int repliesReceived = 0;
+    for(int i = 0; i < numRequests; i++)
+    {
+        usleep(1000);
+        char responseBuffer[NUMBYTES_PER_REQUEST + 1000];
+        if(!readMessage(responseBuffer, NUMBYTES_PER_REQUEST+1000, socketDescriptor, readDescriptors, setTimeOut))
+        {
+            continue;
+        }
+        repliesReceived++;
+        std::chrono::time_point<std::chrono::system_clock> currTime = std::chrono::system_clock::now();
+        auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(currTime-startTime);
+        std::pair<bool, std::pair<string, int>> response = parseOutput(responseBuffer);
+        std::pair<string, int> lineData = response.second;
+        lastSquished = response.first;
+        if(lastSquished)
+            numSquished = (numSquished + 1);
+         cout<<"R"<< " " << lineData.second<<" "<<microseconds.count()<<endl;
+        if(lineData.first=="")
+        {
+            continue;
+        }
+        if(notReceived.find(lineData.second/NUMBYTES_PER_REQUEST)!=notReceived.end())
+        {
+            packetContents[lineData.second/NUMBYTES_PER_REQUEST] = lineData.first;
+            notReceived.erase(notReceived.find(lineData.second/NUMBYTES_PER_REQUEST));
+            //cout<<"erasing packet "<<lineData.second/NUMBYTES_PER_REQUEST<<endl;
+        }
+        //cout<<"here"<<endl;
+    }
+
+    
+
+    if(repliesReceived < BURST_SIZE){
+        // SLEEP_TIME = min(SLEEP_TIME + 2000, 20000);
+        if(BURST_SIZE == 1)
+            SLEEP_TIME = min(15000, SLEEP_TIME + 200);
+        else
+            BURST_SIZE = max(1, BURST_SIZE - 1);
+        
+    }
+    else{
+        SLEEP_TIME = max(SLEEP_TIME - 200, 8000);
+        BURST_SIZE = min(8, BURST_SIZE + 1);
+    }
+
+    std::cout << "SLEEP_TIME " << SLEEP_TIME << "\n";
+    std::cout << "BURST SIZE " << BURST_SIZE << "\n";
+
+}
+
+
 int main(int argc, char *argv[])
 {
     //ofstream packetLogging("log.txt");
@@ -203,13 +272,16 @@ int main(int argc, char *argv[])
     setTimeOut.tv_usec=SELECT_TIMEOUT;
     while (true)
     {
-        usleep(SLEEP_TIME*10);
+        usleep(20000);
         if(!sendMessage("SendSize\nReset\n\n", socketDescriptor, writeDescriptors, setTimeOut))
         {
+            //cout << "here\n";
             continue;
         }
+        // usleep(EST_RTT_TIMEOUT);
         if(!readMessage(responseBuffer, 1000 + NUMBYTES_PER_REQUEST, socketDescriptor, readDescriptors, setTimeOut))
         {
+            //cout << "here now\n";
             continue;
         }
         else
@@ -219,61 +291,69 @@ int main(int argc, char *argv[])
         }
     }
     readMessage(responseBuffer, socketDescriptor, 1000 + NUMBYTES_PER_REQUEST, readDescriptors, setTimeOut);
+    
     int fileSize = extractSize(responseBuffer);
     int numPackets = (fileSize + NUMBYTES_PER_REQUEST - 1)/NUMBYTES_PER_REQUEST;
     vector<string> packetContents(numPackets);
     string fileValue = "";
     int packetsReceived = 0;
-    set<int> notReceived;
+    set<int> notReceived; // set of all the packets not received yet
     for(int i=0;i<numPackets;i++)
     {
         notReceived.insert(i);
     }
-    int sendFor = 0;
-    while(!notReceived.empty())
+    int sendFor = 0; // which packet to ask for
+    while(!notReceived.empty()) // while we havent received all packets
     {
-        usleep(dynamicRateAdjust(SLEEP_TIME));
-        if(std::lower_bound(notReceived.begin(), notReceived.end(), sendFor) == notReceived.end())
-        {
-            sendFor = *notReceived.begin();
-        }
-        else
-        {
-            sendFor = *std::lower_bound(notReceived.begin(), notReceived.end(), sendFor);
-        }
-        string requestString = constructRequest(sendFor, NUMBYTES_PER_REQUEST);
-        if(!sendMessage(requestString, socketDescriptor, writeDescriptors, setTimeOut))
-        {
-            continue;
-        }
-        std::chrono::time_point<std::chrono::system_clock> currTime = std::chrono::system_clock::now();
-        auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(currTime-startTime);
-        cout<<"S"<< " " << sendFor*NUMBYTES_PER_REQUEST<<" "<<microseconds.count()<<endl;
-        sendFor = (sendFor+1)%numPackets;
-        char responseBuffer[NUMBYTES_PER_REQUEST + 1000];
-        if(!readMessage(responseBuffer, 1000 + NUMBYTES_PER_REQUEST, socketDescriptor, readDescriptors, setTimeOut))
-        {
-            continue;
-        }
-        currTime = std::chrono::system_clock::now();
-        microseconds = std::chrono::duration_cast<std::chrono::microseconds>(currTime-startTime);
-        std::pair<bool, std::pair<string, int>> response = parseOutput(responseBuffer);
-        std::pair<string, int> lineData = response.second;
-        lastSquished = response.first;
-        numSquished = (numSquished + 1);
-        cout<<"R"<< " " << lineData.second<<" "<<microseconds.count()<<endl;
-        if(lineData.first=="")
-        {
-            continue;
-        }
-        if(notReceived.find(lineData.second/NUMBYTES_PER_REQUEST)!=notReceived.end())
-        {
-            packetContents[lineData.second/NUMBYTES_PER_REQUEST] = lineData.first;
-            notReceived.erase(notReceived.find(lineData.second/NUMBYTES_PER_REQUEST));
-            //cout<<"erasing packet "<<lineData.second/NUMBYTES_PER_REQUEST<<endl;
-        }
-        //cout<<"here"<<endl;
+        // usleep(dynamicRateAdjust(SLEEP_TIME)); 
+        // if(std::lower_bound(notReceived.begin(), notReceived.end(), sendFor) == notReceived.end())
+        // {
+        //     sendFor = *notReceived.begin();
+        // }
+        // else
+        // {
+        //     sendFor = *std::lower_bound(notReceived.begin(), notReceived.end(), sendFor);
+        // }
+        // string requestString = constructRequest(sendFor, NUMBYTES_PER_REQUEST);
+        // if(!sendMessage(requestString, socketDescriptor, writeDescriptors, setTimeOut))
+        // {
+        //     continue;
+        // }
+        // std::chrono::time_point<std::chrono::system_clock> currTime = std::chrono::system_clock::now();
+        // auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(currTime-startTime);
+        // cout<<"S"<< " " << sendFor*NUMBYTES_PER_REQUEST<<" "<<microseconds.count()<<endl;
+        // sendFor = (sendFor+1)%numPackets;
+        // char responseBuffer[NUMBYTES_PER_REQUEST + 1000];
+        // if(!readMessage(responseBuffer, 1000 + NUMBYTES_PER_REQUEST, socketDescriptor, readDescriptors, setTimeOut))
+        // {
+        //     continue;
+        // }
+        // currTime = std::chrono::system_clock::now();
+        // microseconds = std::chrono::duration_cast<std::chrono::microseconds>(currTime-startTime);
+        // std::pair<bool, std::pair<string, int>> response = parseOutput(responseBuffer);
+        // std::pair<string, int> lineData = response.second;
+        // lastSquished = response.first;
+        // if(lastSquished)
+        //     numSquished = (numSquished + 1);
+        // cout<<"R"<< " " << lineData.second<<" "<<microseconds.count()<<endl;
+        // if(lineData.first=="")
+        // {
+        //     continue;
+        // }
+        // if(notReceived.find(lineData.second/NUMBYTES_PER_REQUEST)!=notReceived.end())
+        // {
+        //     packetContents[lineData.second/NUMBYTES_PER_REQUEST] = lineData.first;
+        //     notReceived.erase(notReceived.find(lineData.second/NUMBYTES_PER_REQUEST));
+        //     cout<<"erasing packet "<<lineData.second/NUMBYTES_PER_REQUEST<<endl;
+        // }
+        // cout<<"here"<<endl;
         // packetsReceived++;
+
+        req10msgs(notReceived, socketDescriptor, writeDescriptors, readDescriptors, setTimeOut, packetContents, startTime);
+        std::cout << "SLEEP_TIME" << SLEEP_TIME << "\n";
+        usleep(SLEEP_TIME);
+
+
     }
     fileValue = "";
     for(int i=0; i<numPackets; i++)
@@ -281,19 +361,20 @@ int main(int argc, char *argv[])
         //cout<<i<<": "<<packetContents[i]<<endl;
         fileValue+=packetContents[i];
     }
+    //cout << fileValue << "\n";
     hashwrapper *myWrapper = new md5wrapper();
     string hashValue = myWrapper->getHashFromString(fileValue);
     string finalSubmission = "Submit: kavya@col334-672\n";
     finalSubmission += "MD5: " + hashValue + "\n\n";
-    int SubmittedBytes = send(socketDescriptor, finalSubmission.c_str(), finalSubmission.size(), 0);
+    // int SubmittedBytes = send(socketDescriptor, finalSubmission.c_str(), finalSubmission.size(), 0);
     // sleep(10);
     int i=0;
-    while (i<50)
+    while (i < 50)
     {
         int SubmittedBytes = send(socketDescriptor, finalSubmission.c_str(), finalSubmission.size(), 0);
         readMessage(responseBuffer, NUMBYTES_PER_REQUEST + 1000, socketDescriptor, readDescriptors, setTimeOut);
         cout<<responseBuffer<<endl;
-        i+=1;
+        i++;
     }
     
     // int SubmittedBytes = send(socketDescriptor, finalSubmission.c_str(), finalSubmission.size(), 0);

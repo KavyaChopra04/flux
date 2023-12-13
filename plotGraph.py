@@ -13,9 +13,12 @@ for line in lines:
     if(line[0]=='S'):
         xSend.append(int(line[2]))
         ySend.append(int(line[1]))
-    else:
+    elif line[0] == 'R':
         xReceive.append(int(line[2]))
         yReceive.append(int(line[1]))
+
+    else:
+        
 print(len(xSend), len(xReceive))
 plt.scatter(xSend, ySend, label = "Send", color ="blue")
 plt.scatter(xReceive, yReceive, label = "Receive", color="orange")
